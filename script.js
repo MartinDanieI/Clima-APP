@@ -48,31 +48,33 @@ document.addEventListener('DOMContentLoaded', () => {
     map.locate({setView: true, maxZoom: 16});
     document.getElementById('locate-me-btn').addEventListener('click', () => map.locate({ setView: true, maxZoom: 16 }));
     
-    // --- 3. LÓGICA DE ALERTAS CONECTADA AL BACKEND ---
+    // --- 3. LÓGICA DE ALERTAS EN MODO LOCAL (MODIFICADO) ---
     let markersOnMap = {}; 
+    let localAlerts = []; // Almacenamiento local de alertas
+    let nextLocalId = 1; // Contador para generar IDs únicos
 
+    // Esta función ahora solo dibuja las alertas almacenadas localmente.
     async function fetchAndDisplayAlerts() {
-        try {
-            const response = await fetch(`${API_URL}/api/alerts`);
-            if (!response.ok) return;
-            const alertsFromServer = await response.json();
-            activeAlertsList.innerHTML = '';
-            if (alertsFromServer.length === 0) {
-                noAlertsMessage.classList.remove('hidden');
-            } else {
-                noAlertsMessage.classList.add('hidden');
-                alertsFromServer.forEach(alert => {
-                    addAlertToList(alert);
-                    if (!markersOnMap[alert.id]) {
-                        addMarkerToMap(alert);
-                    }
-                });
-            }
-        } catch (error) {
-            console.error("Error conectando con la API:", error);
+        activeAlertsList.innerHTML = '';
+        
+        // Limpiar marcadores existentes antes de redibujar para evitar duplicados
+        Object.values(markersOnMap).forEach(marker => map.removeLayer(marker));
+        markersOnMap = {};
+
+        if (localAlerts.length === 0) {
+            noAlertsMessage.classList.remove('hidden');
+        } else {
+            noAlertsMessage.classList.add('hidden');
+            localAlerts.forEach(alert => {
+                addAlertToList(alert);
+                addMarkerToMap(alert);
+            });
         }
+        
+        // El código original que intentaba hacer fetch desde el backend ha sido eliminado.
     }
 
+    // MODIFICADO: Ahora crea la alerta y la guarda en el array local, sin fetch al API.
     map.on('click', async (event) => {
         const latLng = event.latlng;
         const alertType = alertTypeSelect.value;
@@ -80,22 +82,33 @@ document.addEventListener('DOMContentLoaded', () => {
             statusMessage.textContent = 'Por favor, selecciona un tipo de alerta primero.';
             return;
         }
-        statusMessage.textContent = 'Generando descripción...';
+        statusMessage.textContent = 'Generando descripción (Local)...';
         loadingSpinner.classList.remove('hidden');
         try {
             const description = await getGeminiAlertDescription(alertType);
-            const alertPayload = { alertType, description, coords: latLng };
-            statusMessage.textContent = 'Guardando alerta...';
-            const response = await fetch(`${API_URL}/api/create-alert`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(alertPayload),
-            });
-            if (!response.ok) throw new Error('El servidor no pudo guardar la alerta.');
+            
+            // Creación del objeto de alerta LOCAL
+            const newAlert = {
+                id: nextLocalId++, 
+                alert_type: alertType,
+                description: description,
+                latitude: latLng.lat,
+                longitude: latLng.lng,
+                status: 'active',
+                timestamp: new Date().toISOString()
+            };
+            
+            // Guardado local
+            localAlerts.push(newAlert);
+
+            statusMessage.textContent = 'Alerta creada localmente.';
+            
             showTemporaryMessage(alertMessage);
-            fetchAndDisplayAlerts();
+            fetchAndDisplayAlerts(); // Redibuja el mapa y la lista con la nueva alerta
+            
         } catch (error) {
-            console.error("Fallo al crear la alerta:", error);
+            console.error("Fallo al crear la alerta LOCAL:", error);
+            errorMessage.textContent = 'Fallo al simular la alerta local.'; 
             showTemporaryMessage(errorMessage);
         } finally {
             loadingSpinner.classList.add('hidden');
@@ -103,24 +116,30 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     
+    // MODIFICADO: Ahora resuelve la alerta eliminándola del array local, sin fetch al API.
     activeAlertsList.addEventListener('click', async (event) => {
         if (event.target.classList.contains('remove-alert')) {
-            const id = event.target.dataset.id;
-            try {
-                const response = await fetch(`${API_URL}/api/resolve-alert/${id}`, { method: 'POST' });
-                if (!response.ok) throw new Error('El servidor no pudo resolver la alerta.');
-                const listItem = event.target.closest('li');
-                if (listItem) listItem.remove();
-                if (markersOnMap[id]) {
-                    map.removeLayer(markersOnMap[id]);
-                    delete markersOnMap[id];
-                }
-                if (activeAlertsList.children.length === 0) {
-                    noAlertsMessage.classList.remove('hidden');
-                }
-            } catch (error) {
-                console.error("Fallo al resolver la alerta:", error);
+            const id = parseInt(event.target.dataset.id);
+            
+            // Resolver alerta LOCALMENTE: Filtra el array, manteniendo solo las que NO coinciden con el ID
+            localAlerts = localAlerts.filter(alert => alert.id !== id);
+
+            // Eliminar marcador del mapa
+            if (markersOnMap[id]) {
+                map.removeLayer(markersOnMap[id]);
+                delete markersOnMap[id];
             }
+            
+            // Eliminar de la lista
+            const listItem = event.target.closest('li');
+            if (listItem) listItem.remove();
+            
+            // Mostrar mensaje 'No hay alertas'
+            if (localAlerts.length === 0) {
+                 noAlertsMessage.classList.remove('hidden');
+            }
+            
+            console.log(`Alerta ID ${id} resuelta localmente.`);
         }
     });
 
@@ -141,6 +160,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function addMarkerToMap(alert) {
+        // Usa alert.latitude y alert.longitude que son números gracias a la creación local
         const latNum = parseFloat(alert.latitude);
         const lonNum = parseFloat(alert.longitude);
 
@@ -173,7 +193,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function getGeminiAlertDescription(alertType) {
         const apiKey = ""; // Pon tu API key si quieres
+        // Si no hay API Key, simplemente devolvemos la descripción estática.
         if (!apiKey) return `Se ha detectado una condición de ${alertType}.`;
+        
+        // Código de la API de Gemini (se mantiene por si decides usarlo en el futuro)
         const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-1.5-pro-latest:generateContent?key=${apiKey}`;
         const prompt = `Genera una breve pero detallada descripción para una alerta de ${alertType}.`;
         const payload = { contents: [{ parts: [{ text: prompt }] }] };
@@ -195,6 +218,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     // --- FUNCIÓN MOVIDA AL LUGAR CORRECTO ---
+    // Esta función aún depende del API (http://127.0.0.1:5000/api/latest-data)
     async function fetchLatestSensorData() {
         try {
             const response = await fetch(`${API_URL}/api/latest-data`);
@@ -219,11 +243,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- 5. INICIALIZACIÓN ---
-    fetchAndDisplayAlerts();
+    fetchAndDisplayAlerts(); // Carga las alertas locales (vacío al inicio)
     fetchLatestSensorData();
 
     setInterval(() => {
-        fetchAndDisplayAlerts();
+        // Solo llamamos a fetchLatestSensorData, ya que las alertas son gestionadas por el clic
         fetchLatestSensorData();
     }, 5000);
     
