@@ -56,7 +56,10 @@ def resolve_alert(alert_id):
 def create_alert():
     data = request.get_json()
     if not data: return jsonify({"error": "No data provided"}), 400
+    
     query = "INSERT INTO alerts (alert_type, description, latitude, longitude, status) VALUES (%s, %s, %s, %s, %s)"
+    
+    # Se asume que los datos están presentes debido a la lógica del frontend.
     values = (
         data.get('alertType'), 
         data.get('description'), 
@@ -64,19 +67,25 @@ def create_alert():
         data.get('coords')['lng'], 
         'active'
     )
+    
     conn = create_connection()
-    if conn is None: return jsonify({"error": "DB connection failed"}), 500
+    if conn is None: return jsonify({"error": "DB connection failed"}), 500 # Maneja el fallo de conexión
+    
     cursor = conn.cursor()
     try:
         cursor.execute(query, values)
         conn.commit()
         print("Nueva alerta creada como 'active'.")
+        # RETURN DE ÉXITO: Solo se ejecuta si el commit fue exitoso.
+        return jsonify({"success": "Alerta creada exitosamente"}), 201
     except Error as e:
+        # RETURN DE ERROR: Se ejecuta si la inserción falla.
         print(f"Error al insertar nueva alerta: {e}")
+        return jsonify({"error": f"Database insertion failed: {e}"}), 500
     finally:
         cursor.close()
+        # La conexión se cierra en ambos casos (éxito o fallo).
         conn.close()
-    return jsonify({"success": "Alerta creada exitosamente"}), 201
 
 # --- FUNCIÓN MOVIDA AL LUGAR CORRECTO ---
 @app.route('/api/latest-data', methods=['GET'])
